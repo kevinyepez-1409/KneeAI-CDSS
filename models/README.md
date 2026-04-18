@@ -3,7 +3,7 @@
 The trained model weights are hosted externally due to repository size limits.
 
 Download:
-[ADD MENDELEY DATA LINK HERE]
+https://doi.org/10.17632/cgjjbw8hsf.1
 
 After downloading, place the file here:
 
