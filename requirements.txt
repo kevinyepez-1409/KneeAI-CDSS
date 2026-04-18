@@ -1,1 +1,10 @@
-
+streamlit
+tensorflow
+opencv-python
+numpy
+pandas
+matplotlib
+scikit-learn
+Pillow
+scipy
+optuna
