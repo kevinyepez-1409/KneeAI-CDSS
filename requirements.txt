@@ -8,3 +8,4 @@ scikit-learn
 Pillow
 scipy
 optuna
+Add requirements file
