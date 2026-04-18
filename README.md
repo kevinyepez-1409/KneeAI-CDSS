@@ -1,5 +1,9 @@
 # KneeAI-CDSS
-
+![DOI](https://img.shields.io/badge/DOI-10.17632%2Fcgjjbw8hsf.1-blue)
+![Python](https://img.shields.io/badge/Python-3.10-blue)
+![Framework](https://img.shields.io/badge/Framework-TensorFlow-orange)
+![Interface](https://img.shields.io/badge/UI-Streamlit-red)
+![License](https://img.shields.io/badge/License-MIT-green)
 ## 🩺 Uncertainty-Aware Clinical Decision Support System for Knee Osteoarthritis
 
 KneeAI is a web-based Clinical Decision Support System (CDSS) for the automatic severity classification of knee osteoarthritis (KOA) from radiographic images. The system was developed to improve clinical triage by combining deep learning, uncertainty quantification, and visual explainability in an accessible diagnostic support tool.
