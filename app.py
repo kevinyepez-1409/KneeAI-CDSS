@@ -10,10 +10,10 @@ from math import log
 import os
 
 # =========================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS
+# 1. CONFIGURACION DE PAGINA Y ESTILOS
 # =========================================================
 st.set_page_config(
-    page_title="KneeAI – Clinical CDSS",
+    page_title="KneeAI - Research Prototype",
     page_icon="🩺",
     layout="wide"
 )
@@ -63,7 +63,7 @@ st.markdown(
 )
 
 # =========================================================
-# 2. CONFIGURACIÓN GLOBAL DE RUTAS
+# 2. CONFIGURACION GLOBAL DE RUTAS
 # =========================================================
 IMG_SIZE = (300, 300)
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -74,7 +74,7 @@ CLASS_NAMES_3 = ["Non-OA", "Mild-Mod", "Severe"]
 ENTROPY_THRESHOLD = 0.6
 
 # =========================================================
-# 3. CONSTRUCCIÓN DEL MODELO
+# 3. CONSTRUCCION DEL MODELO
 # =========================================================
 def build_model_architecture():
     inputs = tf.keras.Input(shape=(300, 300, 3), name="input_radiograph")
@@ -137,18 +137,18 @@ def make_gradcam(img_array, model, last_conv_layer_name="top_activation"):
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/387/387561.png", width=70)
     st.title("KneeAI 🩺")
-    st.info("**CDSS Prototype**\n- Backbone: EfficientNetB3\n- Accuracy: 82.21%\n- Safety Filter Active")
-    st.markdown(f"**Uncertainty Gate:** H < {ENTROPY_THRESHOLD}")
-    st.caption("Clinical Research Use Only v2.3")
+    st.info("**Research Prototype**\n- Backbone: EfficientNetB3\n- Accuracy: 82.19%\n- Entropy Gate Active")
+    st.markdown(f"**Internal entropy threshold:** H = {ENTROPY_THRESHOLD}")
+    st.caption("Research demonstration only - Not clinically validated")
 
-st.markdown('<div class="kneeai-title">KneeAI – Clinical Decision Support</div>', unsafe_allow_html=True)
-st.markdown('<div class="kneeai-subtitle">Validated CDSS for Knee Osteoarthritis Severity Assessment</div>', unsafe_allow_html=True)
+st.markdown('<div class="kneeai-title">KneeAI - KOA Severity Assessment Research Prototype</div>', unsafe_allow_html=True)
+st.markdown('<div class="kneeai-subtitle">Uncertainty-aware radiographic analysis for research demonstration only</div>', unsafe_allow_html=True)
 
 model = load_clinical_system()
 
 if model:
-    st.markdown('### 1. Patient Radiograph Acquisition')
-    uploaded_file = st.file_uploader("Upload AP Knee X-ray", type=["png", "jpg", "jpeg"])
+    st.markdown('### 1. Knee Radiograph Input')
+    uploaded_file = st.file_uploader("Upload AP knee radiograph", type=["png", "jpg", "jpeg"])
 
     if uploaded_file:
         img_raw = Image.open(uploaded_file).convert('RGB')
@@ -160,8 +160,8 @@ if model:
             st.markdown('</div>', unsafe_allow_html=True)
         
         with col2:
-            st.markdown('<div class="section-card"><div class="section-header">Diagnostic Pipeline</div>', unsafe_allow_html=True)
-            if st.button("🧠 START AI ANALYSIS", use_container_width=True):
+            st.markdown('<div class="section-card"><div class="section-header">Analysis Pipeline</div>', unsafe_allow_html=True)
+            if st.button("🧠 START RESEARCH ANALYSIS", use_container_width=True):
                 with st.spinner("Analyzing..."):
                     img_res = img_raw.resize(IMG_SIZE)
                     x = np.expand_dims(np.array(img_res), axis=0)
@@ -173,20 +173,31 @@ if model:
                     confidence = probs_3[np.argmax(probs_3)]
                     heatmap = make_gradcam(x, model)
 
-                    st.markdown('<div class="section-header" style="margin-top:1rem;">3. Clinical Findings</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="section-header" style="margin-top:1rem;">3. Prototype Output</div>', unsafe_allow_html=True)
                     if entropy_val >= ENTROPY_THRESHOLD:
-                        st.markdown(f'<div class="clinical-alert"><strong>🚨 AMBIGUITY ALERT (H={entropy_val:.2f})</strong><br>Features are inconsistent. Manual review required.</div>', unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div class="clinical-alert"><strong>⚠️ AMBIGUITY FLAG (H={entropy_val:.2f})</strong><br>'
+                            f'Case routed for specialist review because the model output exceeded the internal entropy threshold.<br>'
+                            f'<span style="color:#8b949e; font-size:0.85rem;">Research-prototype placeholder only - Not a validated clinical recommendation.</span></div>',
+                            unsafe_allow_html=True
+                        )
                     else:
                         c_res1, c_res2 = st.columns(2)
                         with c_res1:
                             color = "#f85149" if label_3 == "Severe" else "#d29922" if label_3 == "Mild-Mod" else "#3fb950"
-                            st.markdown(f'<div class="metric-label">Diagnosis</div><div class="metric-value" style="color:{color}">{label_3}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="metric-label">Predicted clinical category</div><div class="metric-value" style="color:{color}">{label_3}</div>', unsafe_allow_html=True)
                         with c_res2:
-                            st.markdown(f'<div class="metric-label">Confidence</div><div class="metric-value">{confidence:.2%}</div>', unsafe_allow_html=True)
-                        st.markdown("**Management Suggestion:**")
-                        if label_3 == "Non-OA": st.success("Routine monitoring and prevention.")
-                        elif label_3 == "Mild-Mod": st.warning("Conservative management advised.")
-                        else: st.error("Urgent surgical evaluation referral.")
+                            st.markdown(f'<div class="metric-label">Confidence estimate</div><div class="metric-value">{confidence:.2%}</div>', unsafe_allow_html=True)
+
+                        st.markdown("**Prototype output message:**")
+                        if label_3 == "Non-OA":
+                            st.success("Institution-configurable illustrative message for the Non-OA category.")
+                        elif label_3 == "Mild-Mod":
+                            st.warning("Institution-configurable illustrative message for the Mild-Moderate OA category.")
+                        else:
+                            st.error("Institution-configurable illustrative message for the Severe OA category.")
+
+                        st.caption("Research-prototype placeholder only - Not a validated clinical recommendation.")
             st.markdown('</div>', unsafe_allow_html=True)
 
         if 'entropy_val' in locals():
@@ -199,15 +210,15 @@ if model:
                 st.markdown('</div>', unsafe_allow_html=True)
             
             with t2:
-                st.markdown('<div class="section-card"><div class="section-header">5. Visual Explainability</div>', unsafe_allow_html=True)
+                st.markdown('<div class="section-card"><div class="section-header">5. Visual Plausibility Support</div>', unsafe_allow_html=True)
                 h_res = cv2.resize(heatmap, (IMG_SIZE[0], IMG_SIZE[1]))
                 h_col = cv2.applyColorMap(np.uint8(255 * h_res), cv2.COLORMAP_JET)
                 h_col = cv2.cvtColor(h_col, cv2.COLOR_BGR2RGB)
                 super_img = cv2.addWeighted(np.array(img_res), 0.6, h_col, 0.4, 0)
-                st.image(super_img, caption="Biological markers detected (Grad-CAM)", use_column_width=True)
+                st.image(super_img, caption="Grad-CAM visual plausibility map", use_column_width=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
-            st.markdown('<div class="section-card"><div class="section-header">6. Clinical Risk Radar</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-card"><div class="section-header">6. Clinical Probability Profile</div>', unsafe_allow_html=True)
             fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
             fig.patch.set_facecolor('#161b22'); ax.set_facecolor('#161b22')
             angles = np.linspace(0, 2*np.pi, 3, endpoint=False).tolist()
@@ -219,4 +230,4 @@ if model:
             st.pyplot(fig)
             st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div style="text-align:center; color:#6b7280; font-size:0.8rem; margin-top:2rem;">KneeAI Framework · CDSS Support Tools</div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center; color:#6b7280; font-size:0.8rem; margin-top:2rem;">KneeAI research prototype - Illustrative output only - Not clinically validated</div>', unsafe_allow_html=True)
