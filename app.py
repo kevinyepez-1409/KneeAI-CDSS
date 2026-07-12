@@ -1,233 +1,291 @@
-import streamlit as st
-import tensorflow as tf
+"""KneeAI research prototype.
+
+This application is for research demonstration only. It is not a clinically
+validated diagnostic device and must not be used for patient management.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+from math import log
+from pathlib import Path
+
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import cv2
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
+import streamlit as st
+import tensorflow as tf
 from PIL import Image
-from math import log
-import os
+from tensorflow.keras import layers, models, regularizers
 
-# =========================================================
-# 1. CONFIGURACION DE PAGINA Y ESTILOS
-# =========================================================
-st.set_page_config(
-    page_title="KneeAI - Research Prototype",
-    page_icon="🩺",
-    layout="wide"
-)
 
-st.markdown(
-    """
-    <style>
-    .main { background-color: #0e1117; }
-    .section-card {
-        background-color: #161b22;
-        padding: 1.5rem;
-        border-radius: 0.75rem;
-        border: 1px solid #30363d;
-        margin-bottom: 1.5rem;
-    }
-    .kneeai-title {
-        font-size: 2.8rem;
-        font-weight: 800;
-        color: #58a6ff;
-        margin-bottom: 0.2rem;
-    }
-    .kneeai-subtitle {
-        font-size: 1.1rem;
-        color: #8b949e;
-        margin-bottom: 2rem;
-    }
-    .section-header {
-        font-size: 1.25rem;
-        font-weight: 600;
-        color: #ffffff;
-        margin-bottom: 1rem;
-        border-bottom: 1px solid #30363d;
-        padding-bottom: 0.5rem;
-    }
-    .metric-label { color: #8b949e; font-size: 0.9rem; font-weight: 600; }
-    .metric-value { font-size: 1.8rem; font-weight: 700; color: #ffffff; }
-    .clinical-alert {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 5px solid #f85149;
-        background-color: rgba(248, 81, 73, 0.1);
-        margin-bottom: 1rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# =========================================================
-# 2. CONFIGURACION GLOBAL DE RUTAS
-# =========================================================
 IMG_SIZE = (300, 300)
-BASE_PATH = os.path.dirname(os.path.abspath(__file__))
-MODEL_WEIGHTS_PATH = os.path.join(BASE_PATH, "kneeai_weights_final.weights.h5")
+BASE_PATH = Path(__file__).resolve().parent
+MODEL_WEIGHTS_PATH = BASE_PATH / "kneeai_weights_final.weights.h5"
+
+# Optional integrity check. Set KNEEAI_EXPECTED_SHA256 to the value listed
+# in the Mendeley Data artifact manifest.
+EXPECTED_MODEL_SHA256 = os.getenv("KNEEAI_EXPECTED_SHA256", "").strip().lower()
 
 CLASS_NAMES_5 = ["KL-0", "KL-1", "KL-2", "KL-3", "KL-4"]
 CLASS_NAMES_3 = ["Non-OA", "Mild-Mod", "Severe"]
+
+# Post-hoc illustrative threshold selected on the archived test-set curve.
+# It is not a validated clinical operating point.
 ENTROPY_THRESHOLD = 0.6
 
-# =========================================================
-# 3. CONSTRUCCION DEL MODELO
-# =========================================================
-def build_model_architecture():
-    inputs = tf.keras.Input(shape=(300, 300, 3), name="input_radiograph")
-    base = tf.keras.applications.EfficientNetB3(include_top=False, weights=None, input_tensor=inputs)
-    x = tf.keras.layers.GlobalAveragePooling2D(name="avg_pool")(base.output)
-    x = tf.keras.layers.BatchNormalization(name="bn_top_1")(x)
-    x = tf.keras.layers.Dense(512, activation='swish', name='dense_512_refined')(x)
-    x = tf.keras.layers.BatchNormalization(name="bn_top_2")(x)
-    x = tf.keras.layers.Dropout(0.49)(x)
-    x = tf.keras.layers.Dense(256, activation='swish', name='dense_256_refined')(x)
-    x = tf.keras.layers.Dropout(0.49)(x)
-    outputs = tf.keras.layers.Dense(5, activation='softmax', name='kl_output')(x)
-    return tf.keras.Model(inputs=inputs, outputs=outputs)
+L2_REG = 3.7e-3
+DROPOUT_RATE = 0.49
+
+
+def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            block = handle.read(chunk_size)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def build_model_architecture() -> tf.keras.Model:
+    """Reconstruct the archived five-class EfficientNetB3 topology."""
+    inputs = layers.Input(shape=(300, 300, 3), name="input_radiograph")
+    backbone = tf.keras.applications.EfficientNetB3(
+        include_top=False,
+        weights=None,
+        input_tensor=inputs,
+    )
+
+    x = layers.GlobalAveragePooling2D(name="avg_pool")(backbone.output)
+    x = layers.BatchNormalization(name="bn_top_1")(x)
+    x = layers.Dense(
+        512,
+        activation="swish",
+        kernel_regularizer=regularizers.l2(L2_REG),
+        name="dense_512",
+    )(x)
+    x = layers.BatchNormalization(name="bn_top_2")(x)
+    x = layers.Dropout(DROPOUT_RATE, name="dropout_1")(x)
+    x = layers.Dense(
+        256,
+        activation="swish",
+        kernel_regularizer=regularizers.l2(L2_REG),
+        name="dense_256",
+    )(x)
+    x = layers.Dropout(DROPOUT_RATE, name="dropout_2")(x)
+    outputs = layers.Dense(5, activation="softmax", name="output")(x)
+
+    return models.Model(
+        inputs=inputs,
+        outputs=outputs,
+        name="EfficientNetB3_5class",
+    )
+
 
 @st.cache_resource
-def load_clinical_system():
-    if not os.path.exists(MODEL_WEIGHTS_PATH):
-        st.error(f"Weights file not found at: {MODEL_WEIGHTS_PATH}")
+def load_research_model() -> tf.keras.Model | None:
+    if not MODEL_WEIGHTS_PATH.exists():
+        st.error(f"Weights file not found: {MODEL_WEIGHTS_PATH}")
         return None
+
+    if EXPECTED_MODEL_SHA256:
+        actual_hash = sha256_file(MODEL_WEIGHTS_PATH)
+        if actual_hash.lower() != EXPECTED_MODEL_SHA256:
+            st.error(
+                "Model SHA-256 mismatch. The application will not load an "
+                "unverified checkpoint."
+            )
+            return None
+
     try:
         model = build_model_architecture()
-        dummy_input = np.zeros((1, 300, 300, 3))
-        _ = model(dummy_input, training=False)
-        model.load_weights(MODEL_WEIGHTS_PATH)
+        _ = model(np.zeros((1, 300, 300, 3), dtype=np.float32), training=False)
+        model.load_weights(str(MODEL_WEIGHTS_PATH))
         return model
-    except Exception as e:
-        st.error(f"Error loading system: {e}")
+    except Exception as error:
+        st.error(f"Could not load the research model: {error}")
         return None
 
-# =========================================================
-# 4. FUNCIONES AUXILIARES
-# =========================================================
-def get_uncertainty(probs):
-    return -np.sum(probs * np.log(probs + 1e-12)) / log(5)
 
-def collapse_5_to_3(p5):
-    return np.array([p5[0] + p5[1], p5[2] + p5[3], p5[4]])
+def collapse_5_to_3(probabilities_5: np.ndarray) -> np.ndarray:
+    """Aggregate KL probabilities in the manuscript's clinical space."""
+    p5 = np.asarray(probabilities_5, dtype=np.float64)
+    if p5.shape != (5,):
+        raise ValueError(f"Expected five probabilities, received shape {p5.shape}.")
+    p3 = np.array(
+        [p5[0] + p5[1], p5[2] + p5[3], p5[4]],
+        dtype=np.float64,
+    )
+    total = float(p3.sum())
+    if not np.isfinite(total) or total <= 0:
+        raise ValueError("Invalid probability vector.")
+    return p3 / total
 
-def make_gradcam(img_array, model, last_conv_layer_name="top_activation"):
+
+def normalized_shannon_entropy(probabilities: np.ndarray) -> float:
+    """Compute normalized entropy in the probability space supplied."""
+    probs = np.asarray(probabilities, dtype=np.float64)
+    probs = np.clip(probs, 1e-12, 1.0)
+    probs = probs / probs.sum()
+    return float(-np.sum(probs * np.log(probs)) / log(probs.size))
+
+
+def clinical_gradcam(
+    image_batch: np.ndarray,
+    model: tf.keras.Model,
+    clinical_class_index: int,
+    last_conv_layer_name: str = "top_activation",
+) -> np.ndarray:
+    """Grad-CAM using the selected aggregated three-class output."""
     try:
         target_layer = model.get_layer(last_conv_layer_name)
     except ValueError:
         target_layer = model.get_layer("top_conv")
-    grad_model = tf.keras.models.Model([model.inputs], [target_layer.output, model.output])
+
+    grad_model = tf.keras.Model(
+        model.inputs,
+        [target_layer.output, model.output],
+    )
+
     with tf.GradientTape() as tape:
-        conv_outputs, predictions = grad_model(img_array)
-        class_idx = tf.argmax(predictions[0])
-        loss = predictions[:, class_idx]
-    grads = tape.gradient(loss, conv_outputs)
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    conv_outputs = conv_outputs[0]
-    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+        conv_outputs, probabilities_5 = grad_model(
+            image_batch,
+            training=False,
+        )
+        if clinical_class_index == 0:
+            target = probabilities_5[:, 0] + probabilities_5[:, 1]
+        elif clinical_class_index == 1:
+            target = probabilities_5[:, 2] + probabilities_5[:, 3]
+        elif clinical_class_index == 2:
+            target = probabilities_5[:, 4]
+        else:
+            raise ValueError("clinical_class_index must be 0, 1, or 2.")
+
+    gradients = tape.gradient(target, conv_outputs)
+    pooled_gradients = tf.reduce_mean(gradients, axis=(0, 1, 2))
+    activation = conv_outputs[0]
+    heatmap = activation @ pooled_gradients[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-10)
+    heatmap = tf.maximum(heatmap, 0)
+    maximum = tf.reduce_max(heatmap)
+    heatmap = tf.where(maximum > 0, heatmap / maximum, heatmap)
     return heatmap.numpy()
 
-# =========================================================
-# 5. SIDEBAR Y LAYOUT
-# =========================================================
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/387/387561.png", width=70)
-    st.title("KneeAI 🩺")
-    st.info("**Research Prototype**\n- Backbone: EfficientNetB3\n- Accuracy: 82.19%\n- Entropy Gate Active")
-    st.markdown(f"**Internal entropy threshold:** H = {ENTROPY_THRESHOLD}")
-    st.caption("Research demonstration only - Not clinically validated")
 
-st.markdown('<div class="kneeai-title">KneeAI - KOA Severity Assessment Research Prototype</div>', unsafe_allow_html=True)
-st.markdown('<div class="kneeai-subtitle">Uncertainty-aware radiographic analysis for research demonstration only</div>', unsafe_allow_html=True)
+def overlay_heatmap(image: Image.Image, heatmap: np.ndarray) -> np.ndarray:
+    image_array = np.asarray(image.resize(IMG_SIZE), dtype=np.float32) / 255.0
+    resized_heatmap = tf.image.resize(
+        heatmap[..., np.newaxis],
+        IMG_SIZE,
+    ).numpy()[..., 0]
+    colored = cm.get_cmap("jet")(resized_heatmap)[..., :3]
+    overlay = np.clip(0.65 * image_array + 0.35 * colored, 0.0, 1.0)
+    return overlay
 
-model = load_clinical_system()
 
-if model:
-    st.markdown('### 1. Knee Radiograph Input')
-    uploaded_file = st.file_uploader("Upload AP knee radiograph", type=["png", "jpg", "jpeg"])
+st.set_page_config(
+    page_title="KneeAI — Research Prototype",
+    page_icon="🩻",
+    layout="wide",
+)
 
-    if uploaded_file:
-        img_raw = Image.open(uploaded_file).convert('RGB')
-        col1, col2 = st.columns([1, 1.5])
-        
-        with col1:
-            st.markdown('<div class="section-card"><div class="section-header">Input Radiograph</div>', unsafe_allow_html=True)
-            st.image(img_raw, use_column_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown('<div class="section-card"><div class="section-header">Analysis Pipeline</div>', unsafe_allow_html=True)
-            if st.button("🧠 START RESEARCH ANALYSIS", use_container_width=True):
-                with st.spinner("Analyzing..."):
-                    img_res = img_raw.resize(IMG_SIZE)
-                    x = np.expand_dims(np.array(img_res), axis=0)
-                    x = tf.keras.applications.efficientnet.preprocess_input(x)
-                    probs_5 = model.predict(x, verbose=0)[0]
-                    entropy_val = get_uncertainty(probs_5)
-                    probs_3 = collapse_5_to_3(probs_5)
-                    label_3 = CLASS_NAMES_3[np.argmax(probs_3)]
-                    confidence = probs_3[np.argmax(probs_3)]
-                    heatmap = make_gradcam(x, model)
+st.title("KneeAI — KOA Severity Research Prototype")
+st.warning(
+    "Research demonstration only. This system is not clinically validated "
+    "and must not be used for diagnosis, treatment, or autonomous triage."
+)
+st.caption(
+    "The entropy threshold H=0.6 is a post-hoc illustrative setting selected "
+    "on an archived internal test-set curve. It is not a transferable clinical "
+    "operating point."
+)
 
-                    st.markdown('<div class="section-header" style="margin-top:1rem;">3. Prototype Output</div>', unsafe_allow_html=True)
-                    if entropy_val >= ENTROPY_THRESHOLD:
-                        st.markdown(
-                            f'<div class="clinical-alert"><strong>⚠️ AMBIGUITY FLAG (H={entropy_val:.2f})</strong><br>'
-                            f'Case routed for specialist review because the model output exceeded the internal entropy threshold.<br>'
-                            f'<span style="color:#8b949e; font-size:0.85rem;">Research-prototype placeholder only - Not a validated clinical recommendation.</span></div>',
-                            unsafe_allow_html=True
-                        )
-                    else:
-                        c_res1, c_res2 = st.columns(2)
-                        with c_res1:
-                            color = "#f85149" if label_3 == "Severe" else "#d29922" if label_3 == "Mild-Mod" else "#3fb950"
-                            st.markdown(f'<div class="metric-label">Predicted clinical category</div><div class="metric-value" style="color:{color}">{label_3}</div>', unsafe_allow_html=True)
-                        with c_res2:
-                            st.markdown(f'<div class="metric-label">Confidence estimate</div><div class="metric-value">{confidence:.2%}</div>', unsafe_allow_html=True)
+model = load_research_model()
+uploaded_file = st.file_uploader(
+    "Upload an AP knee radiograph",
+    type=["png", "jpg", "jpeg"],
+)
 
-                        st.markdown("**Prototype output message:**")
-                        if label_3 == "Non-OA":
-                            st.success("Institution-configurable illustrative message for the Non-OA category.")
-                        elif label_3 == "Mild-Mod":
-                            st.warning("Institution-configurable illustrative message for the Mild-Moderate OA category.")
-                        else:
-                            st.error("Institution-configurable illustrative message for the Severe OA category.")
+if model is not None and uploaded_file is not None:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Input radiograph", width=420)
 
-                        st.caption("Research-prototype placeholder only - Not a validated clinical recommendation.")
-            st.markdown('</div>', unsafe_allow_html=True)
+    if st.button("Run research analysis", use_container_width=True):
+        resized = image.resize(IMG_SIZE)
+        image_batch = np.expand_dims(
+            np.asarray(resized, dtype=np.float32),
+            axis=0,
+        )
+        image_batch = tf.keras.applications.efficientnet.preprocess_input(
+            image_batch
+        )
 
-        if 'entropy_val' in locals():
-            t1, t2 = st.columns(2)
-            with t1:
-                st.markdown('<div class="section-card"><div class="section-header">4. Uncertainty & KL Profile</div>', unsafe_allow_html=True)
-                st.write(f"Shannon Entropy: **{entropy_val:.4f}**")
-                st.progress(min(float(entropy_val), 1.0))
-                st.bar_chart(pd.DataFrame(probs_5, index=CLASS_NAMES_5, columns=["Prob"]))
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with t2:
-                st.markdown('<div class="section-card"><div class="section-header">5. Visual Plausibility Support</div>', unsafe_allow_html=True)
-                h_res = cv2.resize(heatmap, (IMG_SIZE[0], IMG_SIZE[1]))
-                h_col = cv2.applyColorMap(np.uint8(255 * h_res), cv2.COLORMAP_JET)
-                h_col = cv2.cvtColor(h_col, cv2.COLOR_BGR2RGB)
-                super_img = cv2.addWeighted(np.array(img_res), 0.6, h_col, 0.4, 0)
-                st.image(super_img, caption="Grad-CAM visual plausibility map", use_column_width=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+        probabilities_5 = model.predict(image_batch, verbose=0)[0]
+        probabilities_3 = collapse_5_to_3(probabilities_5)
 
-            st.markdown('<div class="section-card"><div class="section-header">6. Clinical Probability Profile</div>', unsafe_allow_html=True)
-            fig, ax = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-            fig.patch.set_facecolor('#161b22'); ax.set_facecolor('#161b22')
-            angles = np.linspace(0, 2*np.pi, 3, endpoint=False).tolist()
-            vals = probs_3.tolist(); vals += vals[:1]; angles += angles[:1]
-            ax.fill(angles, vals, color='#58a6ff', alpha=0.3)
-            ax.plot(angles, vals, color='#58a6ff', linewidth=3)
-            ax.set_xticks(angles[:-1]); ax.set_xticklabels(CLASS_NAMES_3, color="#8b949e", size=11)
-            ax.set_yticklabels([]); plt.tight_layout()
-            st.pyplot(fig)
-            st.markdown('</div>', unsafe_allow_html=True)
+        # MR-4/MR-5 consistency: entropy is computed after aggregation,
+        # in the same three-class clinical probability space.
+        entropy_3 = normalized_shannon_entropy(probabilities_3)
+        predicted_index = int(np.argmax(probabilities_3))
+        predicted_label = CLASS_NAMES_3[predicted_index]
+        confidence = float(probabilities_3[predicted_index])
+        is_ambiguous = entropy_3 > ENTROPY_THRESHOLD
 
-    st.markdown('<div style="text-align:center; color:#6b7280; font-size:0.8rem; margin-top:2rem;">KneeAI research prototype - Illustrative output only - Not clinically validated</div>', unsafe_allow_html=True)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Predicted category", predicted_label)
+        col2.metric("Aggregated probability", f"{confidence:.2%}")
+        col3.metric("Normalized 3-class entropy", f"{entropy_3:.4f}")
+
+        if is_ambiguous:
+            st.error(
+                "Ambiguity flag: the output exceeds the illustrative "
+                "post-hoc entropy threshold. This flag is a research "
+                "placeholder, not a clinical recommendation."
+            )
+        else:
+            st.info(
+                "The output does not exceed the illustrative entropy "
+                "threshold. This does not establish diagnostic certainty."
+            )
+
+        st.subheader("Five-grade internal probability profile")
+        st.bar_chart(
+            pd.DataFrame(
+                {"Probability": probabilities_5},
+                index=CLASS_NAMES_5,
+            )
+        )
+
+        st.subheader("Clinically aggregated three-class profile")
+        st.bar_chart(
+            pd.DataFrame(
+                {"Probability": probabilities_3},
+                index=CLASS_NAMES_3,
+            )
+        )
+
+        heatmap = clinical_gradcam(
+            image_batch,
+            model,
+            predicted_index,
+        )
+        overlay = overlay_heatmap(image, heatmap)
+
+        figure, axis = plt.subplots(figsize=(6, 6))
+        axis.imshow(overlay)
+        axis.axis("off")
+        axis.set_title(
+            "Grad-CAM visual plausibility map "
+            f"for aggregated class: {predicted_label}"
+        )
+        st.pyplot(figure)
+        plt.close(figure)
+
+        st.caption(
+            "Grad-CAM is a post-hoc visual plausibility tool. It is not "
+            "causal evidence of model reasoning and does not replace expert review."
+        )
