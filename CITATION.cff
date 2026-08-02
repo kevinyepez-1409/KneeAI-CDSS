@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this software or its associated artifacts, please cite the manuscript and the Mendeley Data record."
+title: "KneeAI-CDSS: Uncertainty-Aware Research Prototype for Knee Osteoarthritis Severity Assessment"
+type: software
+authors:
+  - family-names: "Yepez"
+    given-names: "Kevin Alejandro"
+  - family-names: "Villacreses"
+    given-names: "Emmily"
+repository-code: "https://github.com/kevinyepez-1409/KneeAI-CDSS"
+url: "https://github.com/kevinyepez-1409/KneeAI-CDSS"
+license: MIT
+date-released: 2026-08-02
+keywords:
+  - knee osteoarthritis
+  - Kellgren-Lawrence
+  - deep learning
+  - EfficientNetB3
+  - uncertainty
+  - Grad-CAM
+  - Streamlit
+preferred-citation:
+  type: article
+  title: "Internal Validation of an Uncertainty-Aware Coarse-from-Fine Deep Learning Framework for Knee Osteoarthritis Severity Assessment"
+  authors:
+    - family-names: "Yepez"
+      given-names: "Kevin Alejandro"
+    - family-names: "Villacreses"
+      given-names: "Emmily"
+  year: 2026
+  notes: "Manuscript associated with the KneeAI-CDSS repository."
+identifiers:
+  - type: doi
+    value: "10.17632/cgjjbw8hsf"
+    description: "Mendeley Data reproducibility package"
